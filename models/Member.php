@@ -4,6 +4,40 @@ class Member
 {
     private $db;
 
+    private function enrichMembers($rows)
+    {
+        foreach ($rows as &$m) {
+
+            // Vollständiger Name
+            $m['full_name'] = trim($m['firstname'] . ' ' . $m['lastname']);
+
+            // Status-Text (PHP 7 kompatibel)
+            if ($m['status'] === 'accepted') {
+                $m['status_text'] = '🟢 Angenommen';
+            } elseif ($m['status'] === 'declined') {
+                $m['status_text'] = '🔴 Abgelehnt';
+            } else {
+                $m['status_text'] = '🟠 Unbekannt';
+            }
+
+            // Fehlende Felder prüfen
+            $missing = [];
+            if (empty($m['email']))      $missing[] = 'E-Mail';
+            if (empty($m['phone']))      $missing[] = 'Telefon';
+            if (empty($m['birthdate']))  $missing[] = 'Geburtsdatum';
+            if (empty($m['nationality'])) $missing[] = 'Nationalität';
+
+            $m['missing_fields'] = $missing;
+            $m['missing_count']  = count($missing);
+
+            // Karte verschickt? (members hat kein Feld dafür)
+            $m['card_sent'] = false;
+        }
+
+        return $rows;
+    }
+
+
     private function enrich($rows)
     {
         $list = [];
@@ -60,11 +94,71 @@ class Member
         return $this->enrich($stmt->fetchAll(PDO::FETCH_ASSOC));
     }
 
+    public function getMembersWithAddress()
+    {
+        $sql = "
+        SELECT 
+            m.id,
+            m.firstname,
+            m.lastname,
+            m.email,
+            m.phone,
+            m.form_status,
+            a.street,
+            a.zip,
+            a.city,
+            a.country
+        FROM members m
+        LEFT JOIN member_address a ON a.member_id = m.id
+        ORDER BY m.lastname ASC
+    ";
+
+        $stmt = $this->db->query($sql);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function setFormStatusAccepted($id)
+    {
+        $sql = "UPDATE members SET form_status = 'accepted' WHERE id = ?";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([$id]);
+    }
+
+    public function setLegacyStatusAccepted($id)
+    {
+        $sql = "UPDATE gf_membres SET status = 'accepted' WHERE id = ?";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute([$id]);
+    }
+
+
+
+
+
     // 🟠 Mitglieder mit noch keinem Beitrag (neuer Antrag)
     public function getPendingApplications()
     {
-        $stmt = $this->db->query("SELECT * FROM gf_membres WHERE status = 'beantragt'");
-        return $this->enrich($stmt->fetchAll(PDO::FETCH_ASSOC));
+        $sql = "
+        SELECT 
+            id,
+            firstname,
+            lastname,
+            email,
+            phone,
+            birthdate,
+            nationality,
+            form_status AS status,
+            created_at
+        FROM members
+        WHERE form_status != 'accepted' OR form_status IS NULL
+        ORDER BY created_at DESC
+        
+    ";
+
+        $stmt = $this->db->query($sql);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $this->enrichMembers($rows);
     }
 
     // 🔵 Mitglieder mit unvollständigen Daten
